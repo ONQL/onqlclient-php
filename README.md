@@ -4,9 +4,35 @@ Official PHP client for the ONQL database server.
 
 ## Installation
 
+### From Packagist (Composer)
+
 ```bash
 composer require onql/onql-client
 ```
+
+### From GitHub via Composer VCS repository
+
+Until Packagist indexing is complete, you can install directly from the
+GitHub repo by adding a `vcs` repository to your `composer.json`:
+
+```json
+{
+    "repositories": [
+        { "type": "vcs", "url": "https://github.com/ONQL/onqlclient-php" }
+    ],
+    "require": {
+        "onql/onql-client": "dev-main"
+    }
+}
+```
+
+Then:
+
+```bash
+composer update onql/onql-client
+```
+
+Pin to a release tag by replacing `dev-main` with the tag, e.g. `"^1.0.0"`.
 
 ## Quick Start
 
