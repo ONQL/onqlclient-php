@@ -1,0 +1,22 @@
+{
+    "name": "onql/onql-client",
+    "description": "PHP client driver for the ONQL TCP server",
+    "type": "library",
+    "license": "MIT",
+    "homepage": "https://github.com/ONQL/onqlclient-php",
+    "authors": [
+        {
+            "name": "Paras Virk",
+            "email": "team@autobit.co"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "ONQL\\": "src/"
+        }
+    },
+    "require": {
+        "php": ">=8.1",
+        "ext-sockets": "*"
+    }
+}
