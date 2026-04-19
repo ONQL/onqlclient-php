@@ -12,9 +12,6 @@ composer require onql/onql-client
 
 ### From GitHub via Composer VCS repository
 
-Until Packagist indexing is complete, you can install directly from the
-GitHub repo by adding a `vcs` repository to your `composer.json`:
-
 ```json
 {
     "repositories": [
@@ -42,13 +39,15 @@ use ONQL\ONQLClient;
 
 $client = ONQLClient::create('localhost', 5656);
 
-$client->insert('mydb.users', ['id' => 'u1', 'name' => 'John', 'age' => 30]);
+$client->insert('mydb', 'users', ['id' => 'u1', 'name' => 'John', 'age' => 30]);
 
-$rows = $client->onql('select * from mydb.users where age > 18');
+$rows = $client->onql('mydb.users[age>18]');
 print_r($rows);
 
-$client->update('mydb.users.u1', ['age' => 31]);
-$client->delete('mydb.users.u1');
+$client->update('mydb', 'users', ['age' => 31],
+    $client->build('mydb.users[id=$1].id', 'u1'));
+
+$client->delete('mydb', 'users', '', 'default', ['u1']);
 
 $client->close();
 ```
@@ -67,8 +66,7 @@ Creates and returns a connected client instance.
 
 ### `$client->sendRequest(keyword, payload, timeout?)`
 
-Sends a raw request frame and waits for a response. Returns an associative
-array with `request_id`, `source`, and `payload`.
+Sends a raw request frame and waits for a response.
 
 ### `$client->close()`
 
@@ -77,72 +75,69 @@ Closes the connection.
 ## Direct ORM-style API
 
 On top of raw `sendRequest`, the client exposes convenience methods for the
-`insert` / `update` / `delete` / `onql` operations. Each one builds the
+common `insert` / `update` / `delete` / `onql` operations. Each one builds the
 standard payload envelope for you and unwraps the `{error, data}` response —
-throwing a `\RuntimeException` on a non-empty `error`, returning the decoded
+throwing `\RuntimeException` on a non-empty `error`, returning the decoded
 `data` field on success.
 
-The `$path` argument is a **dotted string**:
+`db` is passed explicitly to `insert` / `update` / `delete`. `onql` takes a
+fully-qualified ONQL expression (which already includes the db name).
 
-| Path shape | Meaning |
-|------------|---------|
-| `"mydb.users"` | The `users` table (used by `insert`) |
-| `"mydb.users.u1"` | Record id `u1` (used by `update` / `delete`) |
+`query` arguments are **ONQL expression strings**, e.g.
+`'mydb.users[id="u1"].id'`.
 
-### `$client->insert(string $path, array $data)`
+### `$client->insert(string $db, string $table, array $data)`
 
 Insert a **single** record.
 
 ```php
-$client->insert('mydb.users', ['id' => 'u1', 'name' => 'John', 'age' => 30]);
+$client->insert('mydb', 'users', ['id' => 'u1', 'name' => 'John', 'age' => 30]);
 ```
 
-### `$client->update(string $path, array $data, string $protopass = 'default')`
+### `$client->update(string $db, string $table, array $data, string $query = '', string $protopass = 'default', array $ids = [])`
 
-Update the record at `$path`.
+Update records matching `$query` (or the explicit `$ids`).
 
 ```php
-$client->update('mydb.users.u1', ['age' => 31]);
-$client->update('mydb.users.u1', ['active' => false], 'admin');
+$client->update('mydb', 'users', ['age' => 31],
+    $client->build('mydb.users[id=$1].id', 'u1'));
+
+$client->update('mydb', 'users', ['age' => 31], '', 'default', ['u1']);
 ```
 
-### `$client->delete(string $path, string $protopass = 'default')`
+### `$client->delete(string $db, string $table, string $query = '', string $protopass = 'default', array $ids = [])`
 
-Delete the record at `$path`.
+Delete records matching `$query` (or `$ids`).
 
 ```php
-$client->delete('mydb.users.u1');
+$client->delete('mydb', 'users',
+    $client->build('mydb.users[id=$1].id', 'u1'));
+
+$client->delete('mydb', 'users', '', 'default', ['u1']);
 ```
 
 ### `$client->onql(string $query, string $protopass = 'default', string $ctxkey = '', array $ctxvalues = [])`
 
-Run a raw ONQL query. The server's `{error, data}` envelope is unwrapped.
+Run a raw ONQL query.
 
 ```php
-$rows = $client->onql('select * from mydb.users where age > 18');
+$rows = $client->onql('mydb.users[age>18]');
 ```
 
 ### `$client->build(string $query, ...$values): string`
 
-Replace `$1`, `$2`, … placeholders with values. Strings are automatically
-double-quoted; numbers and booleans are inlined verbatim.
+Replace `$1`, `$2`, … placeholders with values.
 
 ```php
-$q = $client->build(
-    'select * from mydb.users where name = $1 and age > $2',
-    'John', 18);
+$q = $client->build('mydb.users[name=$1 and age>$2]', 'John', 18);
 $rows = $client->onql($q);
 ```
 
 ### `ONQLClient::processResult(string $raw)`
 
-Static helper that parses the standard `{error, data}` server envelope.
-Throws `\RuntimeException` on a non-empty `error`; returns the decoded
-`data` on success.
+Static helper that parses the `{error, data}` envelope.
 
 ## Protocol
-
-The client communicates over TCP using a delimiter-based message format:
 
 ```
 <request_id>\x1E<keyword>\x1E<payload>\x04
