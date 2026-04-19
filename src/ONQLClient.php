@@ -12,9 +12,6 @@ class ONQLClient
 
     private int $defaultTimeout;
 
-    /** Default database name used by insert/update/delete/onql. */
-    private string $db = '';
-
     private function __construct(int $defaultTimeout)
     {
         $this->defaultTimeout = $defaultTimeout;
@@ -162,16 +159,34 @@ class ONQLClient
 
     // ----------------------------------------------------------------
     // Direct ORM-style API (insert / update / delete / onql / build)
+    //
+    // `$path` is a dotted string:
+    //   "mydb.users"        -> table `users` in database `mydb`
+    //   "mydb.users.u1"     -> record with id `u1`
     // ----------------------------------------------------------------
 
     /**
-     * Set the default database name for insert/update/delete/onql.
-     * Returns $this so calls can be chained.
+     * Parse "db.table" or "db.table.id" into [$db, $table, $id].
+     * @return array{0:string,1:string,2:string}
      */
-    public function setup(string $db): self
+    private static function parsePath(string $path, bool $requireId): array
     {
-        $this->db = $db;
-        return $this;
+        if ($path === '') {
+            throw new \InvalidArgumentException(
+                'Path must be a non-empty string like "db.table" or "db.table.id"');
+        }
+        $parts = explode('.', $path, 3);
+        if (count($parts) < 2 || $parts[0] === '' || $parts[1] === '') {
+            throw new \InvalidArgumentException(
+                'Path "' . $path . '" must contain at least "db.table"');
+        }
+        [$db, $table] = $parts;
+        $id = $parts[2] ?? '';
+        if ($requireId && $id === '') {
+            throw new \InvalidArgumentException(
+                'Path "' . $path . '" must include a record id: "db.table.id"');
+        }
+        return [$db, $table, $id];
     }
 
     /**
@@ -193,16 +208,20 @@ class ONQLClient
     }
 
     /**
-     * Insert one record or a list of records into $table.
+     * Insert a single record at $path (e.g. "mydb.users").
      *
-     * @param string $table Target table name.
-     * @param mixed  $data  A record (associative array) or list of records.
+     * @param string $path  Table path.
+     * @param array  $data  A single record (associative array).
      * @return mixed Decoded `data` field from the server envelope.
      */
-    public function insert(string $table, $data)
+    public function insert(string $path, array $data)
     {
+        [$db, $table] = self::parsePath($path, false);
+        if (array_is_list($data)) {
+            throw new \InvalidArgumentException('insert() expects a single record object, not a list');
+        }
         $payload = json_encode([
-            'db'      => $this->db,
+            'db'      => $db,
             'table'   => $table,
             'records' => $data,
         ]);
@@ -211,46 +230,35 @@ class ONQLClient
     }
 
     /**
-     * Update records in $table matching $query.
-     *
-     * @param string $table     Target table.
-     * @param mixed  $data      Fields to update.
-     * @param mixed  $query     Match query.
-     * @param string $protopass Proto-pass profile (default "default").
-     * @param array  $ids       Explicit record IDs.
-     * @return mixed
+     * Update the record at $path (e.g. "mydb.users.u1").
      */
-    public function update(string $table, $data, $query, string $protopass = 'default', array $ids = [])
+    public function update(string $path, array $data, string $protopass = 'default')
     {
+        [$db, $table, $id] = self::parsePath($path, true);
         $payload = json_encode([
-            'db'        => $this->db,
+            'db'        => $db,
             'table'     => $table,
             'records'   => $data,
-            'query'     => $query,
+            'query'     => '',
             'protopass' => $protopass,
-            'ids'       => $ids,
+            'ids'       => [$id],
         ]);
         $res = $this->sendRequest('update', $payload);
         return self::processResult($res['payload']);
     }
 
     /**
-     * Delete records in $table matching $query.
-     *
-     * @param string $table
-     * @param mixed  $query
-     * @param string $protopass
-     * @param array  $ids
-     * @return mixed
+     * Delete the record at $path (e.g. "mydb.users.u1").
      */
-    public function delete(string $table, $query, string $protopass = 'default', array $ids = [])
+    public function delete(string $path, string $protopass = 'default')
     {
+        [$db, $table, $id] = self::parsePath($path, true);
         $payload = json_encode([
-            'db'        => $this->db,
+            'db'        => $db,
             'table'     => $table,
-            'query'     => $query,
+            'query'     => '',
             'protopass' => $protopass,
-            'ids'       => $ids,
+            'ids'       => [$id],
         ]);
         $res = $this->sendRequest('delete', $payload);
         return self::processResult($res['payload']);
@@ -258,12 +266,6 @@ class ONQLClient
 
     /**
      * Execute a raw ONQL query and return the decoded `data` payload.
-     *
-     * @param string $query
-     * @param string $protopass
-     * @param string $ctxkey
-     * @param array  $ctxvalues
-     * @return mixed
      */
     public function onql(string $query, string $protopass = 'default', string $ctxkey = '', array $ctxvalues = [])
     {

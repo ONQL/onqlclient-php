@@ -32,34 +32,30 @@ Then:
 composer update onql/onql-client
 ```
 
-Pin to a release tag by replacing `dev-main` with the tag, e.g. `"^1.0.0"`.
-
 ## Quick Start
 
 ```php
 <?php
-
 require_once 'vendor/autoload.php';
 
 use ONQL\ONQLClient;
 
 $client = ONQLClient::create('localhost', 5656);
 
-// Execute a query
-$result = $client->sendRequest('onql', json_encode([
-    'db' => 'mydb',
-    'table' => 'users',
-    'query' => 'name = "John"'
-]));
-echo $result['payload'];
+$client->insert('mydb.users', ['id' => 'u1', 'name' => 'John', 'age' => 30]);
 
-// Close connection
+$rows = $client->onql('select * from mydb.users where age > 18');
+print_r($rows);
+
+$client->update('mydb.users.u1', ['age' => 31]);
+$client->delete('mydb.users.u1');
+
 $client->close();
 ```
 
 ## API Reference
 
-### `ONQLClient::create(host, port, options)`
+### `ONQLClient::create(host, port, timeout)`
 
 Creates and returns a connected client instance.
 
@@ -71,7 +67,8 @@ Creates and returns a connected client instance.
 
 ### `$client->sendRequest(keyword, payload, timeout?)`
 
-Sends a request and waits for a response. Returns an associative array with `request_id`, `source`, and `payload`.
+Sends a raw request frame and waits for a response. Returns an associative
+array with `request_id`, `source`, and `payload`.
 
 ### `$client->close()`
 
@@ -80,76 +77,49 @@ Closes the connection.
 ## Direct ORM-style API
 
 On top of raw `sendRequest`, the client exposes convenience methods for the
-common `insert` / `update` / `delete` / `onql` operations. Each one builds the
-standard payload envelope for you and unwraps the `{error, data}` response
-automatically — throwing a `\RuntimeException` on error, returning the decoded
+`insert` / `update` / `delete` / `onql` operations. Each one builds the
+standard payload envelope for you and unwraps the `{error, data}` response —
+throwing a `\RuntimeException` on a non-empty `error`, returning the decoded
 `data` field on success.
 
-Call `$client->setup($db)` once to bind a default database name; every
-subsequent `insert` / `update` / `delete` / `onql` call will use it.
+The `$path` argument is a **dotted string**:
 
-### `$client->setup(string $db): self`
+| Path shape | Meaning |
+|------------|---------|
+| `"mydb.users"` | The `users` table (used by `insert`) |
+| `"mydb.users.u1"` | Record id `u1` (used by `update` / `delete`) |
 
-Sets the default database. Returns `$this`, so calls can be chained.
+### `$client->insert(string $path, array $data)`
+
+Insert a **single** record.
 
 ```php
-$client->setup('mydb');
+$client->insert('mydb.users', ['id' => 'u1', 'name' => 'John', 'age' => 30]);
 ```
 
-### `$client->insert(string $table, $data)`
+### `$client->update(string $path, array $data, string $protopass = 'default')`
 
-Insert one record or an array of records.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `$table` | `string` | Target table |
-| `$data` | `array` | A record (assoc array) or a list of records |
-
-Returns the decoded `data` field from the server response.
+Update the record at `$path`.
 
 ```php
-$client->insert('users', ['name' => 'John', 'age' => 30]);
-$client->insert('users', [['name' => 'A'], ['name' => 'B']]);
+$client->update('mydb.users.u1', ['age' => 31]);
+$client->update('mydb.users.u1', ['active' => false], 'admin');
 ```
 
-### `$client->update(string $table, $data, $query, string $protopass = 'default', array $ids = [])`
+### `$client->delete(string $path, string $protopass = 'default')`
 
-Update records matching `$query`.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `$table` | `string` | — | Target table |
-| `$data` | `array` | — | Fields to update |
-| `$query` | `array\|string` | — | Match query |
-| `$protopass` | `string` | `'default'` | Proto-pass profile |
-| `$ids` | `array` | `[]` | Explicit record IDs |
+Delete the record at `$path`.
 
 ```php
-$client->update('users', ['age' => 31], ['name' => 'John']);
-$client->update('users', ['active' => false], ['id' => 'u1'], 'admin');
-```
-
-### `$client->delete(string $table, $query, string $protopass = 'default', array $ids = [])`
-
-Delete records matching `$query`.
-
-```php
-$client->delete('users', ['active' => false]);
+$client->delete('mydb.users.u1');
 ```
 
 ### `$client->onql(string $query, string $protopass = 'default', string $ctxkey = '', array $ctxvalues = [])`
 
 Run a raw ONQL query. The server's `{error, data}` envelope is unwrapped.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `$query` | `string` | — | ONQL query text |
-| `$protopass` | `string` | `'default'` | Proto-pass profile |
-| `$ctxkey` | `string` | `''` | Context key |
-| `$ctxvalues` | `array` | `[]` | Context values |
-
 ```php
-$rows = $client->onql('select * from users where age > 18');
+$rows = $client->onql('select * from mydb.users where age > 18');
 ```
 
 ### `$client->build(string $query, ...$values): string`
@@ -158,39 +128,17 @@ Replace `$1`, `$2`, … placeholders with values. Strings are automatically
 double-quoted; numbers and booleans are inlined verbatim.
 
 ```php
-$q = $client->build('select * from users where name = $1 and age > $2', 'John', 18);
-// -> select * from users where name = "John" and age > 18
+$q = $client->build(
+    'select * from mydb.users where name = $1 and age > $2',
+    'John', 18);
 $rows = $client->onql($q);
 ```
 
 ### `ONQLClient::processResult(string $raw)`
 
 Static helper that parses the standard `{error, data}` server envelope.
-Throws a `\RuntimeException` on non-empty `error`; returns the decoded `data`
-on success. Useful if you prefer to build payloads yourself.
-
-### Full example
-
-```php
-<?php
-require_once 'vendor/autoload.php';
-
-use ONQL\ONQLClient;
-
-$client = ONQLClient::create('localhost', 5656);
-$client->setup('mydb');
-
-$client->insert('users', ['name' => 'John', 'age' => 30]);
-
-$rows = $client->onql(
-    $client->build('select * from users where age >= $1', 18)
-);
-print_r($rows);
-
-$client->update('users', ['age' => 31], ['name' => 'John']);
-$client->delete('users', ['name' => 'John']);
-$client->close();
-```
+Throws `\RuntimeException` on a non-empty `error`; returns the decoded
+`data` on success.
 
 ## Protocol
 
